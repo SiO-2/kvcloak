@@ -27,14 +27,21 @@ def sample_kv_cache():
     seq_len = 10
     head_dim = 64
     
-    # Create DynamicCache and populate it directly
-    cache = DynamicCache()
-    for i in range(2):  # 2 layers
+    kv_list = []
+    for _ in range(2):  # 2 layers
         k = torch.randn(batch_size, num_heads, seq_len, head_dim)
         v = torch.randn(batch_size, num_heads, seq_len, head_dim)
-        cache.update(k, v, i)
+        kv_list.append((k, v))
     
-    return cache
+    # Try different ways to create DynamicCache based on transformers version
+    try:
+        return DynamicCache.from_legacy_cache(kv_list)
+    except AttributeError:
+        # New API: create empty cache and update
+        cache = DynamicCache()
+        for i, (k, v) in enumerate(kv_list):
+            cache.update(k, v, layer_idx=i)
+        return cache
 
 
 class TestAESProtector:

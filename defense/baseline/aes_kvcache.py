@@ -81,28 +81,39 @@ class KVCacheAESProtecter:
             where tuple is (nonce, ciphertext, shape, dtype)
         """
         encrypted_cache = []
-        num_layers = len(past_key_values.key_cache)
         
-        for i in range(num_layers):
-            key_states = past_key_values.key_cache[i]
-            value_states = past_key_values.value_cache[i]
-            aesgcm = AESGCM(self.key)
-
-            # Encrypt Key
-            key_bytes, key_shape, key_dtype = self._tensor_to_bytes(key_states)
-            nonce_k = os.urandom(self.nonce_size)
-            ct_bytes_k = aesgcm.encrypt(nonce_k, key_bytes, None)
-            encrypted_key = (nonce_k, ct_bytes_k, key_shape, key_dtype)
-
-            # Encrypt Value
-            value_bytes, value_shape, value_dtype = self._tensor_to_bytes(value_states)
-            nonce_v = os.urandom(self.nonce_size)
-            ct_bytes_v = aesgcm.encrypt(nonce_v, value_bytes, None)
-            encrypted_value = (nonce_v, ct_bytes_v, value_shape, value_dtype)
-
-            encrypted_cache.append([encrypted_key, encrypted_value])
-
+        # Handle both old API (key_cache attribute) and new API (index access)
+        if hasattr(past_key_values, 'key_cache'):
+            # Old API: use key_cache and value_cache attributes
+            num_layers = len(past_key_values.key_cache)
+            for i in range(num_layers):
+                key_states = past_key_values.key_cache[i]
+                value_states = past_key_values.value_cache[i]
+                self._encrypt_layer(encrypted_cache, key_states, value_states)
+        else:
+            # New API: iterate using enumerate
+            for layer_idx, (key_states, value_states) in enumerate(past_key_values):
+                self._encrypt_layer(encrypted_cache, key_states, value_states)
+        
         return encrypted_cache
+    
+    def _encrypt_layer(self, encrypted_cache: list, key_states, value_states):
+        """Encrypt a single layer."""
+        aesgcm = AESGCM(self.key)
+
+        # Encrypt Key
+        key_bytes, key_shape, key_dtype = self._tensor_to_bytes(key_states)
+        nonce_k = os.urandom(self.nonce_size)
+        ct_bytes_k = aesgcm.encrypt(nonce_k, key_bytes, None)
+        encrypted_key = (nonce_k, ct_bytes_k, key_shape, key_dtype)
+
+        # Encrypt Value
+        value_bytes, value_shape, value_dtype = self._tensor_to_bytes(value_states)
+        nonce_v = os.urandom(self.nonce_size)
+        ct_bytes_v = aesgcm.encrypt(nonce_v, value_bytes, None)
+        encrypted_value = (nonce_v, ct_bytes_v, value_shape, value_dtype)
+
+        encrypted_cache.append([encrypted_key, encrypted_value])
 
     def decrypt(self, encrypted_cache: list) -> DynamicCache:
         """Decrypt the entire KV-Cache.
