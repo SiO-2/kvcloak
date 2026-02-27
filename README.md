@@ -1,19 +1,59 @@
 # KV-CLOAK
 
-Code repository for the NDSS paper:
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-orange.svg)](https://pytorch.org/)
 
-**Shadow in the Cache: Unveiling and Mitigating Privacy Risks of KV-cache in LLM Inference**  
-https://www.ndss-symposium.org/ndss-paper/shadow-in-the-cache-unveiling-and-mitigating-privacy-risks-of-kv-cache-in-llm-inference/
+Official implementation of **"Shadow in the Cache: Unveiling and Mitigating Privacy Risks of KV-cache in LLM Inference"** (NDSS 2026)
 
-## Repository Layout
+[Paper](https://www.ndss-symposium.org/ndss-paper/shadow-in-the-cache-unveiling-and-mitigating-privacy-risks-of-kv-cache-in-llm-inference/) • [Project Page](#) • [Citation](#citation)
 
-- `attack/`: KV-cache inversion/collision/injection attacks.
-- `defense/`: KV-Cloak, DP, AES, KV-Shield baselines, and evaluation scripts.
-- `inference/`: KV-cache generation utilities.
-- `dataset/`: small sampled datasets used for experiments.
-- `src/`: Shared utilities including configuration (`config.py`) and security helpers (`security_utils.py`).
+---
 
-## Environment Setup
+## Overview
+
+KV-CLOAK is a privacy-preserving protection mechanism for Key-Value (KV) caches in Large Language Model (LLM) inference. It defends against three types of privacy attacks that can reconstruct user inputs from cached intermediate states:
+
+- **Inversion Attack**: Reconstructs input tokens from KV-cache
+- **Collision Attack**: Uses distance metrics to recover tokens
+- **Injection Attack**: Injects malicious prompts to extract information
+
+### Key Results
+
+| Attack Type | Metric | Origin | KV-Cloak | Reduction |
+|-------------|--------|--------|----------|-----------|
+| **Inversion** | BERTScore | 1.000 | 0.050 | **95%** ↓ |
+| **Collision+** | BERTScore | 1.000 | 0.077 | **92%** ↓ |
+| **Injection** | ROUGE-L | 0.302 | 0.000 | **100%** ↓ |
+
+*Tested on Llama-3.2-1B with 20 samples*
+
+### Performance Overhead
+
+| Method | Latency (64x256) | Latency (64x512) |
+|--------|-----------------|------------------|
+| Origin | baseline | baseline |
+| AES | 3,378 ms | 7,889 ms |
+| **KV-Cloak (fused)** | **34 ms** | **57 ms** |
+| DP | 12 ms | 23 ms |
+
+*KV-Cloak is ~100-200× faster than AES encryption while providing comparable protection*
+
+### Architecture
+
+```
+User Input → [Model] → KV-Cache → [KV-Cloak] → Protected Cache
+                ↓                        ↓
+          (Inference)            (Encryption)
+                ↓                        ↓
+          Attack Attempt ← [Defense] ← Decryption
+```
+
+---
+
+## Quick Start
+
+### 1. Setup Environment
 
 ```bash
 conda create --name kvcloak python=3.10 -y
@@ -21,79 +61,92 @@ conda activate kvcloak
 pip install -r requirements.txt
 ```
 
-## Model and Dataset Preparation
-
-By default, scripts look for models in `~/model` and datasets in `~/dataset`.
-
-Example downloads:
+### 2. Download Model & Dataset
 
 ```bash
-huggingface-cli download sentence-transformers/all-mpnet-base-v2 --local-dir ~/model/all-mpnet-base-v2
-modelscope download --model LLM-Research/Llama-3.2-1B --local_dir ~/model/Llama-3.2-1B
-modelscope download --dataset AI-ModelScope/lmsys-chat-1m --local_dir ~/dataset/lmsys-chat-1m
+# Download model
+huggingface-cli download meta-llama/Llama-3.2-1B --local-dir ~/model/Llama-3.2-1B
+
+# Dataset already included in repo
+ls dataset/
+# alpaca_1k.jsonl  gsm8k_1k.jsonl  lmsys-chat-1m_1k.jsonl
 ```
 
-## Quick Start
-
-### 1) Generate KV-cache
+### 3. Run Complete Workflow
 
 ```bash
+# Generate KV-cache (20 samples for quick test)
 python inference/get_kvcache.py \
   --model-name Llama-3.2-1B \
   --dataset ./dataset/lmsys-chat-1m_1k.jsonl \
   --dtype float32 \
-  --device cuda:0
-```
+  --device cuda:0 \
+  --max-samples 20
 
-This will process the dataset and save KV-cache to `cache/float32/lmsys-chat-1m_1k/Llama-3.2-1B/<input_hash>/origin/`.
-
-### 2) Run attack (`attack/attacks.py`, injection by default)
-
-```bash
+# Run attacks on unprotected cache
 python attack/attacks.py \
   --target-model-name Llama-3.2-1B \
   --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
   --protect-type origin \
+  --run-injection \
+  --start-index 0 --end-index 10
+
+# Apply KV-Cloak protection
+python defense/core/kvcloak.py \
+  --model-name Llama-3.2-1B \
+  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
   --dtype float32 \
   --device cuda:0
+
+# Run attacks on protected cache
+python attack/attacks.py \
+  --target-model-name Llama-3.2-1B \
+  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
+  --protect-type kvcloak \
+  --run-injection \
+  --start-index 0 --end-index 10
 ```
 
-**Useful options:**
+See the difference? Attack accuracy drops from **62.5%** to **9.5%** BERTScore!
 
-- `--start-index`, `--end-index`: run attacks on a subset of cache samples (e.g., `--start-index 0 --end-index 10` for quick testing).
-- `--run-inversion`, `--run-collision`, `--run-injection/--no-run-injection`: select which attacks to run.
-- `--logical-batch-size`, `--micro-batch-size`, `--stop-partition`: collision search controls.
-- `--enhance/--no-enhance`: enable chosen-plaintext-assisted threshold selection for collision (uses fixed rank guess `r=8`).
+---
 
-### 3) Run standalone collision script
+## Repository Structure
 
-```bash
-python attack/collision.py \
-  --model_path ~/model/Llama-3.2-1B/ \
-  --target_data_path cache/torch.float32/lmsys-chat-1m_1k/Llama-3.2-1B/<input_hash>/origin/past_key_values.pt \
-  --device cuda:7 \
-  --dtype float32 \
-  --logical_batch_size 256 \
-  --micro_batch_size 256 \
-  --stop_partition 3 \
-  --target_gap 3
+```
+kvcloak/
+├── attack/              # Attack implementations
+│   ├── attacks.py       # Main attack orchestrator
+│   ├── inversion.py     # Inversion attack
+│   ├── collision.py     # Collision attack
+│   └── injection.py     # Injection attack
+├── defense/             # Protection methods
+│   ├── core/            # KV-Cloak (our method)
+│   │   ├── kvcloak.py   # Core protection logic
+│   │   └── fusion.py    # Operator fusion optimization
+│   ├── baseline/        # Baseline methods
+│   │   ├── aes_kvcache.py
+│   │   ├── dp_kvcache.py
+│   │   └── kvshield.py
+│   ├── config/          # Configuration generation
+│   └── eval/            # Evaluation scripts
+├── inference/           # KV-cache generation
+│   ├── get_kvcache.py   # Batch generation
+│   └── pdsplit.py       # Prefill-decode split
+├── dataset/             # Sample datasets
+├── src/                 # Shared utilities
+│   ├── config.py        # Central configuration
+│   └── security_utils.py # Path validation
+└── tests/               # Unit tests
 ```
 
-## KV-Cloak Protection vs. Attack Accuracy
+---
 
-This experiment compares attack accuracy before and after KV-Cloak protection on the same model and dataset.
+## Detailed Usage
 
-### Prerequisites
+### Step 1: Generate KV-cache for Theta Configuration
 
-Before running KV-Cloak protection, you need to generate the configuration files.
-
-**Important**: The theta configuration must be generated using the **KV-cache of a specific long-sequence sample** to avoid statistical outliers. According to the paper, use the following text ("The Bitter Lesson"):
-
-> "One thing that should be learned from the bitter lesson is the great power of general purpose methods, of methods that continue to scale with increased computation even as the available computation becomes very great. The two methods that seem to scale arbitrarily in this way are search and learning. The second general point to be learned from the bitter lesson is that the actual contents of minds are tremendously, irredeemably complex; we should stop trying to find simple ways to think about the contents of minds, such as simple ways to think about space, objects, multiple agents, or symmetries."
-
-### Step 0: Generate KV-cache for Theta Configuration
-
-Use `inference/pdsplit.py` to generate the KV-cache for this specific input text (the default input is already set to this text):
+KV-Cloak requires a theta configuration generated from a specific long-sequence sample ("The Bitter Lesson"):
 
 ```bash
 python inference/pdsplit.py \
@@ -102,261 +155,115 @@ python inference/pdsplit.py \
   --dtype float32
 ```
 
-This will generate the cache and output its location:
-```
-cache saved in cache/float32/config/Llama-3.2-1B/<input_hash>/
-```
+Note the output path: `cache/float32/config/Llama-3.2-1B/<input_hash>/`
 
-Note down the `<input_hash>` value (e.g., `a1b2c3d4...`) for the next step.
-
-### Step 1: Generate Theta Configuration
-
-Use the generated cache to create the theta configuration:
+### Step 2: Generate Configurations
 
 ```bash
+# Generate theta config
 python defense/config/get_theta_config.py \
   --model-name Llama-3.2-1B \
   --dtype float32 \
   --cache-path cache/float32/config/Llama-3.2-1B/<input_hash>/origin/past_key_values.pt
-```
-
-**Note**: Replace `<input_hash>` with the hash from Step 0. This generates `defense/config/kvcloak/theta/Llama-3.2-1B.json`.
-
-### Step 2: Generate KV-Cloak Configuration
-
-```bash
-python defense/config/get_kvcloak_config.py \
-  --model-name Llama-3.2-1B \
-  --block-size 16 --S-ratio 1 --M-ratio 1 --theta-ratio 2
-```
-
-This generates `defense/config/kvcloak/b16_S1_M1_t2/Llama-3.2-1B.pt`.
-
-### Step 3: Generate Origin KV-cache (if not already done)
-
-```bash
-python inference/get_kvcache.py \
-  --model-name Llama-3.2-1B \
-  --dataset ./dataset/lmsys-chat-1m_1k.jsonl \
-  --dtype float32 \
-  --device cuda:0
-```
-
-### Step 4: Run Attacks on Origin KV-cache (Baseline)
-
-**Quick test (10 samples):**
-```bash
-python attack/attacks.py \
-  --target-model-name Llama-3.2-1B \
-  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --protect-type origin \
-  --dtype float32 \
-  --device cuda:0 \
-  --run-injection \
-  --start-index 0 \
-  --end-index 10
-```
-
-**Full evaluation:**
-```bash
-python attack/attacks.py \
-  --target-model-name Llama-3.2-1B \
-  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --protect-type origin \
-  --dtype float32 \
-  --device cuda:0 \
-  --run-inversion \
-  --run-collision \
-  --run-injection
-```
-
-If you want `collision+` (chosen-plaintext-assisted thresholding with fixed `r=8`), you need to first generate the distance distribution configuration using the same "The Bitter Lesson" KV-cache:
-
-**Generate Collision+ Configuration:**
-
-Use the dedicated script that combines statistic and analysis steps:
-
-```bash
-python attack/get_collision_threshold.py \
-  --model_path ~/model/Llama-3.2-1B \
-  --target_data_path cache/float32/config/Llama-3.2-1B/<input_hash>/origin/past_key_values.pt \
-  --device cuda:0 \
-  --dtype float32
-```
-
-This script will:
-1. Generate distance statistics for each position
-2. Analyze target token vs other tokens distance distributions
-3. Save the collision configuration to `attack/config/origin/float32/Llama-3.2-1B.json`
-
-Then run attacks with `--enhance`:
-
-```bash
-python attack/attacks.py \
-  --target-model-name Llama-3.2-1B \
-  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --protect-type origin \
-  --dtype float32 \
-  --device cuda:0 \
-  --run-collision \
-  --enhance
-```
-
-### Step 5: Apply KV-Cloak Protection
-
-```bash
-python defense/core/kvcloak.py \
-  --model-name Llama-3.2-1B \
-  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --dtype float32 \
-  --device cuda:0
-```
-
-This command:
-- Uses model: `Llama-3.2-1B`
-- Uses dataset: `./dataset/lmsys-chat-1m_1k.jsonl`
-- Uses config: `defense/config/kvcloak/b16_S1_M1_t2/Llama-3.2-1B.pt`
-- Writes protected cache to each sample directory under `kvcloak/past_key_values.pt`
-
-### Step 6: Run Attacks on KV-Cloak-Protected KV-cache
-
-**Quick test (10 samples):**
-```bash
-python attack/attacks.py \
-  --target-model-name Llama-3.2-1B \
-  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --protect-type kvcloak \
-  --dtype float32 \
-  --device cuda:0 \
-  --run-injection \
-  --start-index 0 \
-  --end-index 10
-```
-
-**Full evaluation:**
-```bash
-python attack/attacks.py \
-  --target-model-name Llama-3.2-1B \
-  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --protect-type kvcloak \
-  --dtype float32 \
-  --device cuda:0 \
-  --run-inversion \
-  --run-collision \
-  --run-injection
-```
-
-## Defense Scripts
-
-The `defense/` directory is organized as follows:
-
-```
-defense/
-├── core/          # Core defense implementations (our method)
-│   ├── kvcloak.py       - KV-Cloak protection
-│   └── fusion.py        - operator fusion
-├── baseline/      # Baseline methods for comparison
-│   ├── dp_kvcache.py    - Differential Privacy baseline
-│   ├── aes_kvcache.py   - AES encryption baseline
-│   └── kvshield.py      - KVShield baseline
-```
-
-**Notes:**
-- `core/` contains our method (KV-Cloak) and its performance optimization module:
-  - `kvcloak.py`: The main KV-Cloak protection from NDSS 2026
-  - `fusion.py`: Performance optimization that fuses the M matrix into attention weights during model deployment.
-- `baseline/` contains baseline methods for comparison:
-  - `dp_kvcache.py`: Differential Privacy baseline
-  - `aes_kvcache.py`: AES encryption baseline
-  - `kvshield.py`: KVShield baseline from another paper (has safety and compatibility issues)
-- When running scripts from subdirectories, use Python's module syntax or adjust the working directory:
-
-```bash
-# Option 1: Run from repository root with module path
-cd ~/test/kvcache
-python defense/eval/mmlu_eval.py ...
-
-# Option 2: Run from defense directory
-cd ~/test/kvcache/defense
-python -m eval.mmlu_eval ...
-```
-
-Example evaluation commands:
-
-```bash
-# Generate theta config (prerequisite for KV-Cloak)
-python defense/config/get_theta_config.py \
-  --model-name Llama-3.2-1B \
-  --dtype float32 \
-  --cache-path cache/float32/lmsys-chat-1m_1k/Llama-3.2-1B/<input_hash>/origin/past_key_values.pt
 
 # Generate KV-Cloak config
 python defense/config/get_kvcloak_config.py \
   --model-name Llama-3.2-1B \
   --block-size 16 --S-ratio 1 --M-ratio 1 --theta-ratio 2
+```
 
-# Apply KV-Cloak protection
-python defense/core/kvcloak.py \
-  --model-name Llama-3.2-1B \
+### Step 3: Full Attack Evaluation
+
+```bash
+# All attacks on origin
+python attack/attacks.py \
+  --target-model-name Llama-3.2-1B \
   --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --dtype float32 --device cuda:0
-
-# Apply DP protection (baseline)
-python defense/baseline/dp_kvcache.py \
-  --model-name Llama-3.2-1B \
-  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
-  --dtype float32 --device cuda:0
-
-# Generate collision+ (CPA) threshold config
-python attack/get_collision_threshold.py \
-  --model_path ~/model/Llama-3.2-1B \
-  --target_data_path cache/float32/config/Llama-3.2-1B/<input_hash>/origin/past_key_values.pt \
+  --protect-type origin \
+  --dtype float32 \
   --device cuda:0 \
-  --dtype float32
+  --run-inversion --run-collision --run-injection
 
-# Performance benchmark - test protection overhead (micro benchmark)
+# All attacks on KV-Cloak protected
+python attack/attacks.py \
+  --target-model-name Llama-3.2-1B \
+  --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
+  --protect-type kvcloak \
+  --dtype float32 \
+  --device cuda:0 \
+  --run-inversion --run-collision --run-injection
+```
+
+### Step 4: Performance Benchmarking
+
+```bash
+# Micro-benchmark (protection overhead)
 python defense/eval/micro_benchmark.py \
   --model-name Llama-3.2-1B \
   --device cuda:0 \
   --dtype float32 \
   --num-trials 5 \
   --max-seq-len 512
-
-# Model accuracy evaluation - MMLU benchmark
-python defense/eval/mmlu_eval.py \
-  --model-name Llama-3.2-1B \
-  --device cuda:0 \
-  --dtype float32 \
-  --protect-type origin
-
-# Model accuracy evaluation - SQuAD benchmark
-python defense/eval/squad_eval.py \
-  --model-name Llama-3.2-1B \
-  --device cuda:7 \
-  --dtype float32 \
-  --protect-type kvcloak
 ```
 
-**Note on evaluation types:**
-- **micro_benchmark**: Tests protection overhead (latency) on synthetic KV-cache data
-- **mmlu_eval**: Tests downstream task accuracy on MMLU dataset with protected KV-cache
-- **squad_eval**: Tests downstream task accuracy on SQuAD dataset with protected KV-cache
+---
 
-For all scripts under `defense/`, run `python defense/<script>.py --help` to see full CLI options.
+## Advanced Topics
 
-## Reproducibility Notes
+### Collision+ (Chosen-Plaintext-Assisted)
 
-- Most scripts set `torch.manual_seed(42)` for deterministic behavior.
-- Intermediate cache/results are not committed by default (`cache/`, `attack/result/`, `defense/result/`, `outputs/`).
-- Run a syntax smoke check before large experiments:
+Enhanced collision attack using known plaintext:
 
 ```bash
-python -m compileall attack defense inference
+# Generate collision+ config (already included for Llama-3.2-1B)
+python attack/get_collision_threshold.py \
+  --model_path ~/model/Llama-3.2-1B \
+  --target_data_path cache/float32/config/Llama-3.2-1B/<input_hash>/origin/past_key_values.pt \
+  --device cuda:0 --dtype float32
+
+# Run with --enhance flag
+python attack/attacks.py ... --run-collision --enhance
 ```
 
-## Citation
+### Configuration Options
 
-If you find this repository useful, please cite our paper:
+Edit `src/config.py` to customize:
+
+```python
+# Add new model
+MODEL_CONFIGS["My-Model"] = ["My-Model", 256, 256, 3]
+
+# Adjust KV-Cloak parameters
+KVCLOAK_DEFAULTS["block_size"] = 32
+```
+
+### Security Utilities
+
+```python
+from src.security_utils import validate_path, validate_model_name
+
+# Validate user input paths
+safe_path = validate_path(user_path, base_dir="./cache")
+safe_name = validate_model_name("Llama-3.2-1B")
+```
+
+---
+
+## Testing
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+Test coverage:
+- `test_security_utils.py` - Path validation
+- `test_config.py` - Configuration management  
+- `test_aes_kvcache.py` - AES encryption
+
+---
+
+## Citation
 
 ```bibtex
 @inproceedings{luo2026shadow,
@@ -369,68 +276,25 @@ If you find this repository useful, please cite our paper:
 }
 ```
 
-## Testing
-
-The repository includes unit tests in the `tests/` directory. To run the tests:
-
-```bash
-# Install pytest and test dependencies
-pip install pytest pytest-cov
-
-# Run all tests
-pytest tests/ -v
-
-# Run specific test file
-pytest tests/test_security_utils.py -v
-
-# Run with coverage report
-pytest tests/ --cov=src --cov-report=term-missing
-```
-
-### Test Coverage
-
-Current test modules:
-- `test_security_utils.py` - Security validation functions
-- `test_config.py` - Configuration management
-- `test_aes_kvcache.py` - AES encryption/decryption
-
-## Configuration
-
-You can customize the project settings by editing `src/config.py`:
-
-- **Model paths**: Set `MODEL_ROOT` and `DATASET_ROOT`
-- **Model configurations**: Add new models to `MODEL_CONFIGS` dictionary
-- **Default parameters**: Adjust `KVCLOAK_DEFAULTS`, `DP_DEFAULTS`, `ATTACK_DEFAULTS`
-- **The Bitter Lesson text**: Update `BITTER_LESSON_TEXT` if needed
-
-Example:
-```python
-# Add a new model configuration
-MODEL_CONFIGS["My-Model"] = ["My-Model", 256, 256, 3]
-
-# Change default block size for KV-Cloak
-KVCLOAK_DEFAULTS["block_size"] = 32
-```
-
-## Security
-
-The repository includes basic path validation utilities in `src/security_utils.py`. These help prevent:
-- Path traversal attacks
-- Directory escape attempts
-- Malicious model names
-
-To use in your code:
-```python
-from src.security_utils import validate_path, validate_model_name
-
-# Validate a path
-safe_path = validate_path(user_input_path, base_dir="./cache")
-
-# Validate a model name
-safe_name = validate_model_name(user_model_name)
-```
+---
 
 ## License
 
 This repository is released under the Apache-2.0 License. See `LICENSE`.
-For dataset usage and redistribution cautions, see `DATA_POLICY.md`.
+For dataset usage cautions, see `DATA_POLICY.md`.
+
+---
+
+## Acknowledgments
+
+- This work was published at NDSS 2026
+- Thanks to the open-source community for PyTorch and Transformers
+- Sample datasets derived from publicly available sources
+
+## Contact
+
+For questions or issues, please open a GitHub Issue.
+
+---
+
+**Privacy Tip**: Always validate user inputs when deploying this system in production. See `src/security_utils.py` for utilities.
