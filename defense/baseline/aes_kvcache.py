@@ -81,21 +81,37 @@ class KVCacheAESProtecter:
             where tuple is (nonce, ciphertext, shape, dtype)
         """
         encrypted_cache = []
-        
-        # Handle both old API (key_cache attribute) and new API (index access)
-        if hasattr(past_key_values, 'key_cache'):
-            # Old API: use key_cache and value_cache attributes
-            num_layers = len(past_key_values.key_cache)
-            for i in range(num_layers):
-                key_states = past_key_values.key_cache[i]
-                value_states = past_key_values.value_cache[i]
-                self._encrypt_layer(encrypted_cache, key_states, value_states)
-        else:
-            # New API: iterate using enumerate
-            for layer_idx, (key_states, value_states) in enumerate(past_key_values):
-                self._encrypt_layer(encrypted_cache, key_states, value_states)
-        
+        for key_states, value_states in self._iter_cache_layers(past_key_values):
+            self._encrypt_layer(encrypted_cache, key_states, value_states)
+
         return encrypted_cache
+
+    def _iter_cache_layers(self, past_key_values: DynamicCache):
+        """Yield (key, value) tensors from different DynamicCache APIs."""
+        # 1) Prefer legacy conversion if available (widely supported).
+        to_legacy = getattr(past_key_values, "to_legacy_cache", None)
+        if callable(to_legacy):
+            for key_states, value_states in to_legacy():
+                yield key_states, value_states
+            return
+
+        # 2) Older API with key_cache/value_cache attributes.
+        try:
+            key_cache = past_key_values.key_cache
+            value_cache = past_key_values.value_cache
+            for key_states, value_states in zip(key_cache, value_cache):
+                yield key_states, value_states
+            return
+        except Exception:
+            pass
+
+        # 3) Iterable API.
+        try:
+            for key_states, value_states in past_key_values:
+                yield key_states, value_states
+            return
+        except Exception as e:
+            raise TypeError(f"Unsupported KV cache object type: {type(past_key_values)}") from e
     
     def _encrypt_layer(self, encrypted_cache: list, key_states, value_states):
         """Encrypt a single layer."""
@@ -141,7 +157,17 @@ class KVCacheAESProtecter:
 
             decrypted_kv_list.append((key_states, value_states))
 
-        return DynamicCache.from_legacy_cache(decrypted_kv_list)
+        # Build DynamicCache in a version-compatible way.
+        try:
+            return DynamicCache.from_legacy_cache(decrypted_kv_list)
+        except Exception:
+            cache = DynamicCache()
+            for layer_idx, (key_states, value_states) in enumerate(decrypted_kv_list):
+                try:
+                    cache.update(key_states, value_states, layer_idx=layer_idx)
+                except TypeError:
+                    cache.update(key_states, value_states, layer_idx)
+            return cache
 
     def __repr__(self) -> str:
         """String representation."""
