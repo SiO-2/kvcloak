@@ -269,10 +269,8 @@ Test coverage:
 @inproceedings{luo2026shadow,
   title={Shadow in the Cache: Unveiling and Mitigating Privacy Risks of KV-cache in LLM Inference},
   author={Luo, Zhifan and Shao, Shuo and Zhang, Su and Zhou, Lijing and Hu, Yuke and Zhao, Chenxu and Liu, Zhihao and Qin, Zhan},
-  booktitle={Network and Distributed System Security Symposium (NDSS)},
-  year={2026},
-  publisher={Internet Society},
-  url={https://www.ndss-symposium.org/ndss-paper/shadow-in-the-cache-unveiling-and-mitigating-privacy-risks-of-kv-cache-in-llm-inference/}
+  booktitle={Network and Distributed System Security Symposium},
+  year={2026}
 }
 ```
 
