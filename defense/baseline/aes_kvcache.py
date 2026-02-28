@@ -88,11 +88,53 @@ class KVCacheAESProtecter:
 
     def _iter_cache_layers(self, past_key_values: DynamicCache):
         """Yield (key, value) tensors from different DynamicCache APIs."""
+        def _read_attr(obj, attr_name):
+            if not hasattr(obj, attr_name):
+                return None
+            value = getattr(obj, attr_name)
+            if callable(value):
+                try:
+                    return value()
+                except TypeError:
+                    return None
+            return value
+
+        def _normalize_entry(entry):
+            # Most common: (key_tensor, value_tensor)
+            if isinstance(entry, (tuple, list)) and len(entry) >= 2:
+                key_states, value_states = entry[0], entry[1]
+                if torch.is_tensor(key_states) and torch.is_tensor(value_states):
+                    return key_states, value_states
+
+            # Dict-like containers
+            if isinstance(entry, dict):
+                key_states = entry.get("key") or entry.get("keys")
+                value_states = entry.get("value") or entry.get("values")
+                if torch.is_tensor(key_states) and torch.is_tensor(value_states):
+                    return key_states, value_states
+
+            # Object-style layer containers across transformers versions
+            for key_attr, value_attr in [
+                ("key_states", "value_states"),
+                ("key", "value"),
+                ("keys", "values"),
+                ("k", "v"),
+            ]:
+                key_states = _read_attr(entry, key_attr)
+                value_states = _read_attr(entry, value_attr)
+                if torch.is_tensor(key_states) and torch.is_tensor(value_states):
+                    return key_states, value_states
+
+            return None
+
         # 1) Prefer legacy conversion if available (widely supported).
         to_legacy = getattr(past_key_values, "to_legacy_cache", None)
         if callable(to_legacy):
-            for key_states, value_states in to_legacy():
-                yield key_states, value_states
+            legacy_cache = to_legacy()
+            for entry in legacy_cache:
+                pair = _normalize_entry(entry)
+                if pair is not None:
+                    yield pair
             return
 
         # 2) Older API with key_cache/value_cache attributes.
@@ -107,8 +149,29 @@ class KVCacheAESProtecter:
 
         # 3) Iterable API.
         try:
-            for key_states, value_states in past_key_values:
-                yield key_states, value_states
+            pending_key = None
+            for entry in past_key_values:
+                pair = _normalize_entry(entry)
+                if pair is not None:
+                    yield pair
+                    continue
+
+                if torch.is_tensor(entry):
+                    if pending_key is None:
+                        pending_key = entry
+                    else:
+                        yield pending_key, entry
+                        pending_key = None
+                    continue
+
+                # Some versions expose per-layer objects via .layers
+                layer_pair = _normalize_entry(entry)
+                if layer_pair is not None:
+                    yield layer_pair
+                    continue
+
+            if pending_key is not None:
+                raise TypeError("Unpaired tensor entry found in cache iterator")
             return
         except Exception as e:
             raise TypeError(f"Unsupported KV cache object type: {type(past_key_values)}") from e
