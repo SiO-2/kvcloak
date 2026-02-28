@@ -9,7 +9,21 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "defense" / "baseline"))
 
 from aes_kvcache import KVCacheAESProtecter
-from transformers.cache_utils import DynamicCache
+
+
+class _DummyKVCache:
+    """Minimal KV-cache container for AES unit tests.
+
+    This keeps tests stable across transformers cache API changes while
+    preserving the data shape contract used by KVCacheAESProtecter.encrypt().
+    """
+
+    def __init__(self, kv_list):
+        self.key_cache = [k for k, _ in kv_list]
+        self.value_cache = [v for _, v in kv_list]
+
+    def __iter__(self):
+        return iter(zip(self.key_cache, self.value_cache))
 
 
 @pytest.fixture
@@ -33,15 +47,7 @@ def sample_kv_cache():
         v = torch.randn(batch_size, num_heads, seq_len, head_dim)
         kv_list.append((k, v))
     
-    # Try different ways to create DynamicCache based on transformers version
-    try:
-        return DynamicCache.from_legacy_cache(kv_list)
-    except AttributeError:
-        # New API: create empty cache and update
-        cache = DynamicCache()
-        for i, (k, v) in enumerate(kv_list):
-            cache.update(k, v, layer_idx=i)
-        return cache
+    return _DummyKVCache(kv_list)
 
 
 class TestAESProtector:

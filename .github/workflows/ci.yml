@@ -85,8 +85,9 @@ jobs:
         pip install pytest pytest-cov
         # Install core dependencies only for tests
         pip install torch --index-url https://download.pytorch.org/whl/cpu
-        pip install transformers tqdm numpy
+        pip install transformers==4.51.1 tqdm numpy
         pip install cryptography pytest-asyncio
+        python -c "import transformers; print('transformers version:', transformers.__version__)"
     
     - name: Run security tests
       run: |
