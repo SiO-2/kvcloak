@@ -8,6 +8,16 @@ Official implementation of **"Shadow in the Cache: Unveiling and Mitigating Priv
 
 [Paper](https://www.ndss-symposium.org/ndss-paper/shadow-in-the-cache-unveiling-and-mitigating-privacy-risks-of-kv-cache-in-llm-inference/) • [Project Page](#) • [Citation](#citation)
 
+## Responsible Use
+
+This repository includes attack implementations for security research and defense evaluation.
+
+- Use only on systems, models, and data you own or are explicitly authorized to test.
+- Do not use this code for unauthorized access, data extraction, or privacy violations.
+- Attack scripts require explicit acknowledgment via `--i-understand-risks` (or `KVCLOAK_ALLOW_ATTACKS=1`).
+
+See `RESPONSIBLE_USE.md` for policy details.
+
 ---
 
 ## Overview
@@ -88,6 +98,7 @@ python attack/attacks.py \
   --target-model-name Llama-3.2-1B \
   --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
   --protect-type origin \
+  --i-understand-risks \
   --run-injection \
   --start-index 0 --end-index 10
 
@@ -103,6 +114,7 @@ python attack/attacks.py \
   --target-model-name Llama-3.2-1B \
   --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
   --protect-type kvcloak \
+  --i-understand-risks \
   --run-injection \
   --start-index 0 --end-index 10
 ```
@@ -180,6 +192,7 @@ python attack/attacks.py \
   --target-model-name Llama-3.2-1B \
   --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
   --protect-type origin \
+  --i-understand-risks \
   --dtype float32 \
   --device cuda:0 \
   --run-inversion --run-collision --run-injection
@@ -189,6 +202,7 @@ python attack/attacks.py \
   --target-model-name Llama-3.2-1B \
   --dataset-path ./dataset/lmsys-chat-1m_1k.jsonl \
   --protect-type kvcloak \
+  --i-understand-risks \
   --dtype float32 \
   --device cuda:0 \
   --run-inversion --run-collision --run-injection

@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from datetime import datetime
 import json
@@ -534,11 +535,28 @@ if __name__ == "__main__":
         default=True,
         help="Whether to run injection attack.",
     )
+    parser.add_argument(
+        "--i-understand-risks",
+        action="store_true",
+        help=(
+            "Required acknowledgment for running attack code. "
+            "You can also set KVCLOAK_ALLOW_ATTACKS=1."
+        ),
+    )
     args = parser.parse_args()
 
     if not (args.run_inversion or args.run_collision or args.run_injection):
         raise ValueError(
             "At least one attack must be enabled: --run-inversion, --run-collision, or --run-injection."
+        )
+
+    attacks_enabled = args.run_inversion or args.run_collision or args.run_injection
+    allow_attacks_env = os.getenv("KVCLOAK_ALLOW_ATTACKS", "0") == "1"
+    if attacks_enabled and not (args.i_understand_risks or allow_attacks_env):
+        raise ValueError(
+            "Attack execution requires explicit acknowledgment. "
+            "Add --i-understand-risks or set KVCLOAK_ALLOW_ATTACKS=1. "
+            "Only run on systems and data you are authorized to test."
         )
 
     if args.target_model_name not in MODEL_CONFIGS and args.base_model_name is None:
