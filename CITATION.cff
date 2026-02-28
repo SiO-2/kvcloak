@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+title: "KV-CLOAK"
+message: "If you use this repository, please cite the paper below."
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/SiO-2/kvcloak"
+authors:
+  - family-names: Luo
+    given-names: Zhifan
+  - family-names: Shao
+    given-names: Shuo
+  - family-names: Zhang
+    given-names: Su
+  - family-names: Zhou
+    given-names: Lijing
+  - family-names: Hu
+    given-names: Yuke
+  - family-names: Zhao
+    given-names: Chenxu
+  - family-names: Liu
+    given-names: Zhihao
+  - family-names: Qin
+    given-names: Zhan
+preferred-citation:
+  type: conference-paper
+  title: "Shadow in the Cache: Unveiling and Mitigating Privacy Risks of KV-cache in LLM Inference"
+  authors:
+    - family-names: Luo
+      given-names: Zhifan
+    - family-names: Shao
+      given-names: Shuo
+    - family-names: Zhang
+      given-names: Su
+    - family-names: Zhou
+      given-names: Lijing
+    - family-names: Hu
+      given-names: Yuke
+    - family-names: Zhao
+      given-names: Chenxu
+    - family-names: Liu
+      given-names: Zhihao
+    - family-names: Qin
+      given-names: Zhan
+  year: 2026
+  conference-title: "Network and Distributed System Security Symposium"
+  url: "https://www.ndss-symposium.org/ndss-paper/shadow-in-the-cache-unveiling-and-mitigating-privacy-risks-of-kv-cache-in-llm-inference/"

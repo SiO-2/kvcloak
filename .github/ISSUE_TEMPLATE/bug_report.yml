@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a reproducible bug
+title: "[Bug] <short description>"
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this issue. Please provide enough detail to reproduce it.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands and order
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error logs / traceback
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: e.g. 3.10.19
+    validations:
+      required: true
+  - type: input
+    id: torch
+    attributes:
+      label: Torch version
+      placeholder: e.g. 2.6.0
+    validations:
+      required: true
+  - type: input
+    id: transformers
+    attributes:
+      label: Transformers version
+      placeholder: e.g. 4.51.1
+    validations:
+      required: true
+  - type: dropdown
+    id: authorization
+    attributes:
+      label: Responsible-use confirmation
+      description: For issues involving attack scripts
+      options:
+        - I confirm I am testing only on authorized systems/data.
+        - Not applicable.
+    validations:
+      required: true

@@ -8,6 +8,8 @@ Official implementation of **"Shadow in the Cache: Unveiling and Mitigating Priv
 
 [Paper](https://www.ndss-symposium.org/ndss-paper/shadow-in-the-cache-unveiling-and-mitigating-privacy-risks-of-kv-cache-in-llm-inference/) • [Project Page](#) • [Citation](#citation)
 
+Additional resources: [Contributing](CONTRIBUTING.md) • [Responsible use](RESPONSIBLE_USE.md)
+
 ## Responsible Use
 
 This repository includes attack implementations for security research and defense evaluation.
@@ -278,6 +280,8 @@ Test coverage:
 ---
 
 ## Citation
+
+For GitHub-friendly citation metadata, see `CITATION.cff`.
 
 ```bibtex
 @inproceedings{luo2026shadow,

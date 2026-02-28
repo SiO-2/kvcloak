@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Responsible use policy
+    url: https://github.com/SiO-2/kvcloak/blob/main/RESPONSIBLE_USE.md
+    about: Please review before opening attack-related issues.
