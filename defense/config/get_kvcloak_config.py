@@ -13,6 +13,18 @@ def random_orthogonal_matrix(dim: int) -> torch.Tensor:
     return S
 
 
+def generate_marker_table(block_size: int, head_dim: int, threshold: float) -> torch.Tensor:
+    """Generate the staggered marker lookup table.
+
+    Returns a (block_size+1, head_dim) tensor whose row 0 is zeros (the
+    no-marker sentinel) and row i holds marker a_i with elements uniform in
+    (3i*t, (3i+0.5)*t), t = threshold.
+    """
+    idx = torch.arange(1, block_size + 1, dtype=torch.float32).unsqueeze(1)
+    table = (3.0 * idx + 0.5 * torch.rand((block_size, head_dim))) * threshold
+    return torch.cat([torch.zeros((1, head_dim)), table], dim=0)
+
+
 def get_kvcloak_config(
     num_hidden_layers: int,
     num_key_value_heads: int,
@@ -60,12 +72,12 @@ def get_kvcloak_config(
                     * theta_ratio
                 )
                 threshold = theta * M_ratio * 1.42
-                a = (torch.rand(head_dim) + 3) * threshold
+                A = generate_marker_table(block_size, head_dim, threshold)
                 # Constraints:
                 # -threshold < kM < threshold
-                # 3*threshold <= a < 4*threshold
-                # 2*threshold < kM+a < 5*threshold
-                # padding = 1.5*threshold (kM < padding < kM+a)
+                # 3i*threshold <= a_i < (3i+0.5)*threshold (row i of A)
+                # (3i-1)*threshold < kM+a_i < (3i+2)*threshold
+                # padding ~ U(1.1, 1.5)*threshold (kM < padding < kM+a_i)
 
                 data = {
                     "theta": theta,
@@ -74,7 +86,7 @@ def get_kvcloak_config(
                     "S": S,
                     "M_ratios": M_ratios,
                     "M_angles": M_angles,
-                    "a": a,
+                    "A": A,
                 }
                 kv_data.append(data)
             layer_data.append(kv_data)
@@ -103,7 +115,7 @@ def get_kvcloak_config_mla(
             "Mn_indices": Mn_indices,
             "Mr_ratios": Mr_ratios,
             "Mr_angles": Mr_angles,
-            "a": a,
+            "A": A,
         }
     ]
     """
@@ -120,11 +132,13 @@ def get_kvcloak_config_mla(
             1 / Mr_ratio
         )
         Mr_angles = torch.rand(qk_rope_head_dim // 2) * 2 * torch.pi
-        a = (torch.rand(kv_lora_rank + qk_rope_head_dim) + 3) * threshold
+        A = generate_marker_table(
+            block_size, kv_lora_rank + qk_rope_head_dim, threshold
+        )
         # -threshold < cM < threshold
-        # 3*threshold <= a < 4*threshold
-        # 2*threshold < cM+a < 5*threshold
-        # padding = 1.5*threshold (cM < padding < cM+a)
+        # 3i*threshold <= a_i < (3i+0.5)*threshold (row i of A)
+        # (3i-1)*threshold < cM+a_i < (3i+2)*threshold
+        # padding ~ U(1.1, 1.5)*threshold (cM < padding < cM+a_i)
 
         data = {
             "theta": theta,
@@ -134,7 +148,7 @@ def get_kvcloak_config_mla(
             "Mn_indices": Mn_indices,
             "Mr_ratios": Mr_ratios,
             "Mr_angles": Mr_angles,
-            "a": a,
+            "A": A,
         }
 
         kvcloak_config.append(data)
