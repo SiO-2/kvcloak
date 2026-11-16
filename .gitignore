@@ -54,3 +54,7 @@ outputs/
 env/
 venv/
 ENV/
+
+# compiled CUDA benchmark binaries
+defense/eval/chacha_gpu
+defense/eval/chacha_aead
