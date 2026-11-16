@@ -105,19 +105,25 @@ class BenchmarkRunner:
         dp_norm_path = Path(
             f"defense/config/dp_norm/{self.model_name}.json"
         ).expanduser()
-        k_norms, v_norms = load_norms_from_file(dp_norm_path)
-        clip_norm_k_empirical = float(
-            np.percentile(k_norms, self.dp_params["norm_percentile"])
-        )
-        clip_norm_v_empirical = float(
-            np.percentile(v_norms, self.dp_params["norm_percentile"])
-        )
-        protectors["DP"] = KVCacheDPProtecter(
-            clip_norm_k_empirical,
-            clip_norm_v_empirical,
-            self.dp_params["epsilon"],
-            self.dp_params["delta"],
-        )
+        norm_data = load_norms_from_file(dp_norm_path)
+        if norm_data is None:
+            print(
+                "Warning: DP norm config not found. Skipping DP protector in micro benchmark."
+            )
+        else:
+            k_norms, v_norms = norm_data
+            clip_norm_k_empirical = float(
+                np.percentile(k_norms, self.dp_params["norm_percentile"])
+            )
+            clip_norm_v_empirical = float(
+                np.percentile(v_norms, self.dp_params["norm_percentile"])
+            )
+            protectors["DP"] = KVCacheDPProtecter(
+                clip_norm_k_empirical,
+                clip_norm_v_empirical,
+                self.dp_params["epsilon"],
+                self.dp_params["delta"],
+            )
 
         print("Initializing KV-Cloak configs with a template cache...")
         template_cache = create_synthetic_kv_cache(
