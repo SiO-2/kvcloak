@@ -222,7 +222,7 @@ def main():
     )
     parser.add_argument(
         "--save-dtype",
-        default="bfloat16",
+        default="float32",
         choices=["float16", "bfloat16", "float32"],
         help="Dtype used when saving transformed model.",
     )

@@ -6,14 +6,19 @@ from transformers import AutoConfig
 from typing import Any, Dict, List, Tuple, Optional
 
 
-def random_orthogonal_matrix(dim: int) -> torch.Tensor:
+def random_orthogonal_matrix(dim: int, generator: Optional[torch.Generator] = None) -> torch.Tensor:
     """Generate a random orthogonal matrix using QR decomposition."""
-    random_matrix = torch.randn(dim, dim)
+    random_matrix = torch.randn(dim, dim, generator=generator)
     S, _ = torch.linalg.qr(random_matrix)
     return S
 
 
-def generate_marker_table(block_size: int, head_dim: int, threshold: float) -> torch.Tensor:
+def generate_marker_table(
+    block_size: int,
+    head_dim: int,
+    threshold: float,
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
     """Generate the staggered marker lookup table.
 
     Returns a (block_size+1, head_dim) tensor whose row 0 is zeros (the
@@ -21,7 +26,7 @@ def generate_marker_table(block_size: int, head_dim: int, threshold: float) -> t
     (3i*t, (3i+0.5)*t), t = threshold.
     """
     idx = torch.arange(1, block_size + 1, dtype=torch.float32).unsqueeze(1)
-    table = (3.0 * idx + 0.5 * torch.rand((block_size, head_dim))) * threshold
+    table = (3.0 * idx + 0.5 * torch.rand((block_size, head_dim), generator=generator)) * threshold
     return torch.cat([torch.zeros((1, head_dim)), table], dim=0)
 
 
@@ -34,12 +39,13 @@ def get_kvcloak_config(
     S_ratio: float,
     M_ratio: float,
     theta_ratio: float,
+    generator: Optional[torch.Generator] = None,
 ) -> List[List[List[Dict[str, torch.Tensor]]]]:
     """Generate KV-Cloak configuration for all layers and heads.
-    
+
     The configuration structure is:
     kvcloak_config[num_hidden_layers][num_key_value_heads][k/v][config_dict]
-    
+
     Args:
         num_hidden_layers: Number of transformer layers
         num_key_value_heads: Number of key/value heads
@@ -49,7 +55,11 @@ def get_kvcloak_config(
         S_ratio: Scaling ratio for S matrix
         M_ratio: Scaling ratio for M matrix
         theta_ratio: Multiplier for theta values
-        
+        generator: Optional torch.Generator for all random draws. When given,
+            the configuration is a deterministic function of the generator's
+            seed (used by defense/core/keyderive.py for per-session
+            derivation); when None, the global RNG is used as before.
+
     Returns:
         Nested list of configuration dictionaries
     """
@@ -59,20 +69,20 @@ def get_kvcloak_config(
         for head_idx in range(num_key_value_heads):
             kv_data = []
             for kv_type in ["key", "value"]:
-                S_ratios = torch.rand(block_size) * (S_ratio - (1 / S_ratio)) + (
+                S_ratios = torch.rand(block_size, generator=generator) * (S_ratio - (1 / S_ratio)) + (
                     1 / S_ratio
                 )
-                M_ratios = torch.rand(head_dim // 2) * (M_ratio - (1 / M_ratio)) + (
+                M_ratios = torch.rand(head_dim // 2, generator=generator) * (M_ratio - (1 / M_ratio)) + (
                     1 / M_ratio
                 )
-                M_angles = torch.rand(head_dim // 2) * 2 * torch.pi
-                S = random_orthogonal_matrix(block_size)
+                M_angles = torch.rand(head_dim // 2, generator=generator) * 2 * torch.pi
+                S = random_orthogonal_matrix(block_size, generator=generator)
                 theta = (
                     theta_config[f"layer_{layer_idx}"][f"{kv_type}_max_values"][head_idx]
                     * theta_ratio
                 )
                 threshold = theta * M_ratio * 1.42
-                A = generate_marker_table(block_size, head_dim, threshold)
+                A = generate_marker_table(block_size, head_dim, threshold, generator=generator)
                 # Constraints:
                 # -threshold < kM < threshold
                 # 3i*threshold <= a_i < (3i+0.5)*threshold (row i of A)

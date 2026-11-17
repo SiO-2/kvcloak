@@ -713,7 +713,21 @@ def process_model_cache(
     kvcloak: KVCloak,
     device: torch.device,
     protect_type: str = "kvcloak",
+    cloak_factory=None,
 ):
+    """Protect stored KV caches.
+
+    Legacy behaviour (cloak_factory=None) reuses the single configured
+    `kvcloak` object across every sample directory. Sharing one parameter
+    instance across requests is acceptable ONLY for reproducing published
+    benchmarks; deployments must derive parameters per session.
+
+    When cloak_factory is given (see defense.core.keyderive.
+    session_cloak_factory), each sample is protected under a freshly
+    derived per-session parameter instance and the public session nonce
+    is stored next to the protected cache so the receiver can re-derive
+    it. This is the required deployment mode.
+    """
     if not cache_path.exists():
         print(f"Warning: KV cache directory not found for {model_name} at {cache_path}")
         return
@@ -724,6 +738,13 @@ def process_model_cache(
     if not sub_directories:
         print(f"No subdirectories found in '{cache_path}' to process.")
         return
+
+    if cloak_factory is None:
+        print(
+            "WARNING: protecting multiple caches under ONE static configuration "
+            "(benchmark/research mode). Deployments must derive parameters per "
+            "session: pass --user-key (see defense/core/keyderive.py)."
+        )
 
     print(f"Processing directories in '{cache_path}':")
     for item_dir in tqdm(sub_directories, desc=f"Processing {model_name}"):
@@ -742,10 +763,17 @@ def process_model_cache(
             )
             continue
 
+        session_nonce = None
+        if cloak_factory is not None:
+            kvcloak, session_nonce = cloak_factory()
+            dtype_for_load = kvcloak.dtype
+        else:
+            dtype_for_load = kvcloak.dtype
+
         orig_kvcache = tuple(
             (
-                k.to(device=device, dtype=kvcloak.dtype),
-                v.to(device=device, dtype=kvcloak.dtype),
+                k.to(device=device, dtype=dtype_for_load),
+                v.to(device=device, dtype=dtype_for_load),
             )
             for (k, v) in orig_kvcache
         )
@@ -759,6 +787,10 @@ def process_model_cache(
         kvcloak_output_dir.mkdir(parents=True, exist_ok=True)
         kvcloak_kvcache_path = kvcloak_output_dir / "past_key_values.pt"
         torch.save(kvcloak_kvcache, kvcloak_kvcache_path)
+        if session_nonce is not None:
+            # Public metadata: the receiver re-derives (S, M, A) from the
+            # user key and this nonce. Without the user key it is useless.
+            (kvcloak_output_dir / "session_nonce.bin").write_bytes(session_nonce)
 
 
 def main():
@@ -772,7 +804,11 @@ def main():
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument(
         "--dtype",
-        default="bfloat16",
+        # float32 default: bfloat16 storage is incompatible with the staggered
+        # marker amplitudes (rounding at 2^-9 of marker scale corrupts decoded
+        # values and breaks padding-row classification). Use bf16 only with an
+        # explicit flag until the low-precision design is settled.
+        default="float32",
         choices=["float16", "bfloat16", "float32"],
     )
     parser.add_argument("--theta-ratio", type=float, default=2.0)
@@ -811,6 +847,27 @@ def main():
         default=None,
         help="KV-Cloak config path (.pt). If not set, built from block/S/M/theta/model.",
     )
+    parser.add_argument(
+        "--user-key",
+        default=None,
+        help=(
+            "Hex-encoded user secret key. When set, each cache file is protected "
+            "under its own per-session derived (S, M, A) instance (secure mode, "
+            "required for deployment). Requires --theta-config and --head-dim."
+        ),
+    )
+    parser.add_argument(
+        "--theta-config",
+        default=None,
+        help="Public theta calibration JSON (same format as get_kvcloak_config).",
+    )
+    parser.add_argument(
+        "--head-dim",
+        type=int,
+        default=None,
+        help="Attention head dim (required in --user-key mode; layers/kv-heads are "
+        "inferred from the theta config).",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -820,6 +877,71 @@ def main():
     dtype = getattr(torch, args.dtype)
     dtype_name = args.dtype
     dataset_name = Path(args.dataset_path).stem
+
+    cache_path = (
+        Path(args.cache_path).expanduser()
+        if args.cache_path is not None
+        else Path(
+            f"cache/{dtype_name}/{dataset_name}/{args.model_name}"
+        ).expanduser()
+    )
+
+    if args.user_key is not None:
+        # Secure mode: one derived parameter instance per cache file.
+        import json as _json
+        import sys as _sys
+
+        _repo_root = str(Path(__file__).resolve().parents[2])
+        if _repo_root not in _sys.path:
+            _sys.path.insert(0, _repo_root)
+
+        from defense.core.keyderive import session_cloak_factory
+
+        theta_config_path = (
+            Path(args.theta_config).expanduser()
+            if args.theta_config is not None
+            else Path(
+                f"defense/config/kvcloak/theta/{args.model_name}.json"
+            ).expanduser()
+        )
+        if not theta_config_path.exists():
+            raise FileNotFoundError(
+                f"theta config not found: {theta_config_path}"
+            )
+        with theta_config_path.open("r", encoding="utf-8") as f:
+            theta_config = _json.load(f)
+        if args.head_dim is None:
+            raise ValueError("--head-dim is required in --user-key mode")
+        user_key = bytes.fromhex(args.user_key)
+        if not user_key:
+            raise ValueError("--user-key must be a non-empty hex string")
+        cloak_factory = session_cloak_factory(
+            user_key=user_key,
+            theta_config=theta_config,
+            head_dim=args.head_dim,
+            block_size=args.block_size,
+            dtype=dtype,
+            fused=args.fused,
+            need_ratio=args.need_ratio,
+            add_a=args.add_a,
+            S_ratio=args.S_ratio,
+            M_ratio=args.M_ratio,
+            theta_ratio=args.theta_ratio,
+        )
+        print(
+            f"Configuration - {args.model_name}_{dtype_name}_a{args.add_a}_f{args.fused}"
+            f"_b{args.block_size}_S{args.S_ratio:g}_M{args.M_ratio:g}_t{args.theta_ratio:g}"
+            f" {args.device} [PER-SESSION DERIVATION]"
+        )
+        process_model_cache(
+            args.model_name,
+            cache_path,
+            None,
+            args.device,
+            protect_type=args.protect_type,
+            cloak_factory=cloak_factory,
+        )
+        return
 
     kvcloak_config_path = (
         Path(args.config_path).expanduser()

@@ -346,7 +346,7 @@ def main():
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument(
         "--dtype",
-        default="bfloat16",
+        default="float32",
         choices=["float16", "bfloat16", "float32"],
     )
     parser.add_argument("--norm-percentile", type=float, default=50)
